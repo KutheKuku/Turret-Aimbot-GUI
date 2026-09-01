@@ -1,5 +1,5 @@
 -- Place in StarterPlayer > StarterPlayerScripts as LocalScript
--- WORKING AIMBOT WITH FOV CIRCLE, SILENT AIM, AND SINGLE PRESS LOCK
+-- PRISON LIFE AIMBOT - WORKING SILENT AIM
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,28 +15,33 @@ local settings = {
 	enabled = true,
 	range = 100,
 	fov = 120,
-	smoothness = 0.1,
-	aimAssist = false,
 	silentAim = false,
 	lockedTarget = nil,
 	isLocked = false
 }
 
-print("🔧 Aimbot system initialized")
+print("🔧 Prison Life Aimbot initialized")
 
--- Get nearest player in range
-local function getNearestPlayer()
+-- Get nearest ENEMY player (NOT self)
+local function getNearestEnemy()
 	local nearest = nil
 	local nearestDist = settings.range
 	
 	for _, p in pairs(Players:GetPlayers()) do
-		if p ~= player and p.Character and p.Character:FindFirstChild("Head") then
-			local head = p.Character.Head
-			local dist = (head.Position - camera.CFrame.Position).Magnitude
-			
-			if dist < nearestDist then
-				nearest = head
-				nearestDist = dist
+		-- Don't lock on self
+		if p ~= player and p.Character then
+			-- Make sure they have Head and Humanoid
+			if p.Character:FindFirstChild("Head") and p.Character:FindFirstChild("Humanoid") then
+				local humanoid = p.Character.Humanoid
+				if humanoid.Health > 0 then
+					local head = p.Character.Head
+					local dist = (head.Position - camera.CFrame.Position).Magnitude
+					
+					if dist < nearestDist then
+						nearest = head
+						nearestDist = dist
+					end
+				end
 			end
 		end
 	end
@@ -46,52 +51,65 @@ end
 
 -- Check if target is in FOV
 local function isInFOV(target)
-	if not target then return false end
-	local direction = (target.Position - camera.CFrame.Position).Unit
-	local dot = direction:Dot(camera.CFrame.LookVector)
-	local angle = math.deg(math.acos(math.clamp(dot, -1, 1)))
+	if not target or not target.Parent then return false end
+	local cameraPos = camera.CFrame.Position
+	local targetPos = target.Position
+	local direction = (targetPos - cameraPos).Unit
+	local cameraLook = camera.CFrame.LookVector
+	local angle = math.deg(math.acos(math.clamp(direction:Dot(cameraLook), -1, 1)))
 	return angle < (settings.fov / 2)
 end
 
 -- Line of sight check
 local function hasLineOfSight(target)
-	if not target then return false end
-	local origin = camera.CFrame.Position
-	local direction = (target.Position - origin)
+	if not target or not target.Parent then return false end
+	local cameraPos = camera.CFrame.Position
+	local targetPos = target.Position
+	local direction = targetPos - cameraPos
+	
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Blacklist
 	params.FilterDescendantsInstances = {player.Character}
 	
-	local result = Workspace:Raycast(origin, direction.Unit * 500, params)
-	return result == nil or result.Instance:IsDescendantOf(target.Parent)
+	local rayResult = Workspace:Raycast(cameraPos, direction.Unit * 500, params)
+	
+	if rayResult == nil then
+		return true
+	end
+	
+	-- Check if ray hit the target or its parent
+	if rayResult.Instance:IsDescendantOf(target.Parent) then
+		return true
+	end
+	
+	return false
 end
 
--- Aim at target
-local function aimAtTarget(target)
-	if not target or not settings.enabled then return end
+-- SILENT AIM - Move mouse to target head
+local function silentAim(target)
+	if not target or not target.Parent then return end
+	if not settings.enabled or not settings.silentAim then return end
 	if not hasLineOfSight(target) or not isInFOV(target) then return end
 	
-	local targetPos = target.Position
-	local newCFrame = CFrame.new(camera.CFrame.Position, targetPos)
+	-- Get screen position of target head
+	local screenPos = camera:WorldToScreenPoint(target.Position)
 	
-	if not settings.silentAim then
-		camera.CFrame = camera.CFrame:Lerp(newCFrame, settings.smoothness)
-	end
+	-- Move mouse to target
+	mouse.X = screenPos.X
+	mouse.Y = screenPos.Y
 end
 
--- Single press E to toggle lock
+-- E key to toggle lock
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	
 	if input.KeyCode == Enum.KeyCode.E then
 		settings.isLocked = not settings.isLocked
 		
 		if settings.isLocked then
-			settings.lockedTarget = getNearestPlayer()
+			settings.lockedTarget = getNearestEnemy()
 			if settings.lockedTarget then
 				print("🎯 LOCKED: " .. settings.lockedTarget.Parent.Name)
 			else
-				print("❌ No target in range")
+				print("❌ No enemy found in range!")
 				settings.isLocked = false
 			end
 		else
@@ -101,26 +119,31 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 end)
 
--- Main aim loop
+-- Main silent aim loop
 RunService.RenderStepped:Connect(function()
-	if not settings.enabled then return end
+	if not settings.isLocked or not settings.lockedTarget then return end
 	
 	local target = settings.lockedTarget
 	
+	-- Check if target still exists
 	if target and target.Parent then
-		if target.Parent:FindFirstChild("Humanoid") then
-			aimAtTarget(target)
+		local humanoid = target.Parent:FindFirstChild("Humanoid")
+		if humanoid and humanoid.Health > 0 then
+			silentAim(target)
 		else
 			settings.isLocked = false
 			settings.lockedTarget = nil
 		end
+	else
+		settings.isLocked = false
+		settings.lockedTarget = nil
 	end
 end)
 
 -- ==================== FOV CIRCLE VISUAL ====================
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "AimbotGui"
+screenGui.Name = "PrisonAimbotGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
@@ -141,7 +164,7 @@ fovStroke.Color = Color3.fromRGB(0, 255, 100)
 fovStroke.Transparency = 0.3
 fovStroke.Parent = fovCircle
 
--- Update FOV circle position (center of screen)
+-- Update FOV circle
 RunService.RenderStepped:Connect(function()
 	local screenSize = screenGui.AbsoluteSize
 	local centerX = screenSize.X / 2
@@ -151,11 +174,13 @@ RunService.RenderStepped:Connect(function()
 	fovCircle.Size = UDim2.new(0, radius * 2, 0, radius * 2)
 	fovCircle.Position = UDim2.new(0, centerX - radius, 0, centerY - radius)
 	
-	-- Color change if locked
-	if settings.isLocked and settings.lockedTarget then
+	-- Color based on lock status
+	if settings.isLocked and settings.lockedTarget and settings.lockedTarget.Parent then
 		fovStroke.Color = Color3.fromRGB(255, 0, 0)
+		fovStroke.Transparency = 0.2
 	else
 		fovStroke.Color = Color3.fromRGB(0, 255, 100)
+		fovStroke.Transparency = 0.3
 	end
 end)
 
@@ -163,7 +188,7 @@ end)
 
 local panel = Instance.new("Frame")
 panel.Name = "ControlPanel"
-panel.Size = UDim2.new(0, 250, 0, 300)
+panel.Size = UDim2.new(0, 250, 0, 200)
 panel.Position = UDim2.new(0, 10, 0, 10)
 panel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 panel.BorderSizePixel = 0
@@ -190,7 +215,7 @@ title.BackgroundTransparency = 1
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 13
 title.Font = Enum.Font.GothamBold
-title.Text = "AIMBOT"
+title.Text = "PRISON AIMBOT"
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
@@ -242,7 +267,7 @@ minimizeBtn.MouseButton1Click:Connect(function()
 		minimizeBtn.Text = "+"
 		content.Visible = false
 	else
-		panel.Size = UDim2.new(0, 250, 0, 300)
+		panel.Size = UDim2.new(0, 250, 0, 200)
 		minimizeBtn.Text = "−"
 		content.Visible = true
 	end
@@ -277,7 +302,7 @@ local function makeToggle(name, key)
 	toggle.Parent = container
 	
 	local toggleCorner = Instance.new("UICorner")
-	toggleCorner.CornerRadius = UDim.new(0, 4)
+	toggleCorner.CornerRadius = UDim.new(0, 3)
 	toggleCorner.Parent = toggle
 	
 	toggle.MouseButton1Click:Connect(function()
@@ -364,11 +389,9 @@ end
 
 -- Add controls
 makeToggle("Enable", "enabled")
-makeToggle("Aim Assist", "aimAssist")
 makeToggle("Silent Aim", "silentAim")
 makeSlider("Range", "range", 10, 500)
 makeSlider("FOV", "fov", 10, 180)
-makeSlider("Smoothness", "smoothness", 0.01, 0.5)
 
 -- Info
 local info = Instance.new("TextLabel")
@@ -377,7 +400,7 @@ info.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 info.TextColor3 = Color3.fromRGB(180, 180, 180)
 info.TextSize = 9
 info.Font = Enum.Font.Gotham
-info.Text = "🔑 Press E to LOCK/UNLOCK\n✓ Green circle = FOV\n🔴 Red circle = LOCKED"
+info.Text = "🔑 Press E = LOCK/UNLOCK\n🎯 Turn ON Silent Aim + Shoot"
 info.TextWrapped = true
 info.BorderSizePixel = 0
 info.Parent = content
@@ -386,4 +409,4 @@ local infoCorner = Instance.new("UICorner")
 infoCorner.CornerRadius = UDim.new(0, 4)
 infoCorner.Parent = info
 
-print("✅ Aimbot fully loaded with FOV circle and Silent Aim")
+print("✅ Prison Life Aimbot loaded - Press E to lock!")
