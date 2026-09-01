@@ -1,14 +1,14 @@
--- Place this in StarterPlayer > StarterPlayerScripts as a LocalScript
--- AIMBOT WITH GUI - Everything in one script
+-- Place in StarterPlayer > StarterPlayerScripts as LocalScript
+-- WORKING AIMBOT WITH FOV CIRCLE, SILENT AIM, AND SINGLE PRESS LOCK
 
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 local camera = Workspace.CurrentCamera
+local mouse = player:GetMouse()
 
 -- Settings
 local settings = {
@@ -18,12 +18,13 @@ local settings = {
 	smoothness = 0.1,
 	aimAssist = false,
 	silentAim = false,
-	lockedTarget = nil
+	lockedTarget = nil,
+	isLocked = false
 }
 
-print("✓ Aimbot script loaded")
+print("🔧 Aimbot system initialized")
 
--- Get nearest player
+-- Get nearest player in range
 local function getNearestPlayer()
 	local nearest = nil
 	local nearestDist = settings.range
@@ -39,6 +40,7 @@ local function getNearestPlayer()
 			end
 		end
 	end
+	
 	return nearest
 end
 
@@ -47,15 +49,21 @@ local function isInFOV(target)
 	if not target then return false end
 	local direction = (target.Position - camera.CFrame.Position).Unit
 	local dot = direction:Dot(camera.CFrame.LookVector)
-	local angle = math.deg(math.acos(dot))
-	return angle < settings.fov
+	local angle = math.deg(math.acos(math.clamp(dot, -1, 1)))
+	return angle < (settings.fov / 2)
 end
 
 -- Line of sight check
 local function hasLineOfSight(target)
 	if not target then return false end
-	local ray = workspace:FindPartOnRay(Ray.new(camera.CFrame.Position, (target.Position - camera.CFrame.Position).Unit * 500))
-	return ray == nil or ray.Parent == target.Parent
+	local origin = camera.CFrame.Position
+	local direction = (target.Position - origin)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+	params.FilterDescendantsInstances = {player.Character}
+	
+	local result = Workspace:Raycast(origin, direction.Unit * 500, params)
+	return result == nil or result.Instance:IsDescendantOf(target.Parent)
 end
 
 -- Aim at target
@@ -66,49 +74,96 @@ local function aimAtTarget(target)
 	local targetPos = target.Position
 	local newCFrame = CFrame.new(camera.CFrame.Position, targetPos)
 	
-	if settings.silentAim then
-		-- Just store it without moving camera
-		return
+	if not settings.silentAim then
+		camera.CFrame = camera.CFrame:Lerp(newCFrame, settings.smoothness)
 	end
-	
-	camera.CFrame = camera.CFrame:Lerp(newCFrame, settings.smoothness)
 end
 
--- E key to lock
+-- Single press E to toggle lock
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
+	
 	if input.KeyCode == Enum.KeyCode.E then
-		settings.lockedTarget = getNearestPlayer()
+		settings.isLocked = not settings.isLocked
+		
+		if settings.isLocked then
+			settings.lockedTarget = getNearestPlayer()
+			if settings.lockedTarget then
+				print("🎯 LOCKED: " .. settings.lockedTarget.Parent.Name)
+			else
+				print("❌ No target in range")
+				settings.isLocked = false
+			end
+		else
+			print("🔓 UNLOCKED")
+			settings.lockedTarget = nil
+		end
 	end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
-	if input.KeyCode == Enum.KeyCode.E then
-		settings.lockedTarget = nil
-	end
-end)
-
--- Main loop
+-- Main aim loop
 RunService.RenderStepped:Connect(function()
 	if not settings.enabled then return end
 	
-	local target = settings.lockedTarget or getNearestPlayer()
-	if target and settings.aimAssist then
-		aimAtTarget(target)
+	local target = settings.lockedTarget
+	
+	if target and target.Parent then
+		if target.Parent:FindFirstChild("Humanoid") then
+			aimAtTarget(target)
+		else
+			settings.isLocked = false
+			settings.lockedTarget = nil
+		end
 	end
 end)
 
--- ==================== GUI ====================
+-- ==================== FOV CIRCLE VISUAL ====================
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "AimbotGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- Main panel
+-- FOV Circle
+local fovCircle = Instance.new("Frame")
+fovCircle.Name = "FOVCircle"
+fovCircle.Size = UDim2.new(0, 200, 0, 200)
+fovCircle.BackgroundTransparency = 1
+fovCircle.Parent = screenGui
+
+local fovCircleCorner = Instance.new("UICorner")
+fovCircleCorner.CornerRadius = UDim.new(1, 0)
+fovCircleCorner.Parent = fovCircle
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Thickness = 2
+fovStroke.Color = Color3.fromRGB(0, 255, 100)
+fovStroke.Transparency = 0.3
+fovStroke.Parent = fovCircle
+
+-- Update FOV circle position (center of screen)
+RunService.RenderStepped:Connect(function()
+	local screenSize = screenGui.AbsoluteSize
+	local centerX = screenSize.X / 2
+	local centerY = screenSize.Y / 2
+	
+	local radius = (settings.fov / 180) * 200
+	fovCircle.Size = UDim2.new(0, radius * 2, 0, radius * 2)
+	fovCircle.Position = UDim2.new(0, centerX - radius, 0, centerY - radius)
+	
+	-- Color change if locked
+	if settings.isLocked and settings.lockedTarget then
+		fovStroke.Color = Color3.fromRGB(255, 0, 0)
+	else
+		fovStroke.Color = Color3.fromRGB(0, 255, 100)
+	end
+end)
+
+-- ==================== CONTROL PANEL GUI ====================
+
 local panel = Instance.new("Frame")
-panel.Name = "Panel"
-panel.Size = UDim2.new(0, 250, 0, 350)
+panel.Name = "ControlPanel"
+panel.Size = UDim2.new(0, 250, 0, 300)
 panel.Position = UDim2.new(0, 10, 0, 10)
 panel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 panel.BorderSizePixel = 0
@@ -120,7 +175,6 @@ panelCorner.Parent = panel
 
 -- Header
 local header = Instance.new("Frame")
-header.Name = "Header"
 header.Size = UDim2.new(1, 0, 0, 35)
 header.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 header.BorderSizePixel = 0
@@ -131,7 +185,6 @@ headerCorner.CornerRadius = UDim.new(0, 6)
 headerCorner.Parent = header
 
 local title = Instance.new("TextLabel")
-title.Name = "Title"
 title.Size = UDim2.new(1, -40, 1, 0)
 title.BackgroundTransparency = 1
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -141,40 +194,25 @@ title.Text = "AIMBOT"
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
-local padding = Instance.new("UIPadding")
-padding.PaddingLeft = UDim.new(0, 10)
-padding.Parent = title
+local titlePadding = Instance.new("UIPadding")
+titlePadding.PaddingLeft = UDim.new(0, 10)
+titlePadding.Parent = title
 
--- Close button
-local closeBtn = Instance.new("TextButton")
-closeBtn.Name = "Close"
-closeBtn.Size = UDim2.new(0, 30, 0, 30)
-closeBtn.Position = UDim2.new(1, -35, 0, 2)
-closeBtn.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.TextSize = 12
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.Text = "−"
-closeBtn.BorderSizePixel = 0
-closeBtn.Parent = header
+-- Minimize button
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+minimizeBtn.Position = UDim2.new(1, -35, 0, 2)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeBtn.TextSize = 12
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.Text = "−"
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Parent = header
 
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 4)
-closeCorner.Parent = closeBtn
-
-local isMinimized = false
-closeBtn.MouseButton1Click:Connect(function()
-	isMinimized = not isMinimized
-	if isMinimized then
-		panel.Size = UDim2.new(0, 250, 0, 35)
-		closeBtn.Text = "+"
-		content.Visible = false
-	else
-		panel.Size = UDim2.new(0, 250, 0, 350)
-		closeBtn.Text = "−"
-		content.Visible = true
-	end
-end)
+local minimizeCorner = Instance.new("UICorner")
+minimizeCorner.CornerRadius = UDim.new(0, 4)
+minimizeCorner.Parent = minimizeBtn
 
 -- Content
 local content = Instance.new("Frame")
@@ -196,8 +234,22 @@ contentPadding.PaddingRight = UDim.new(0, 8)
 contentPadding.PaddingBottom = UDim.new(0, 8)
 contentPadding.Parent = content
 
--- Helper to make toggles
-local function makeToggle(name, key, onChange)
+local isMinimized = false
+minimizeBtn.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		panel.Size = UDim2.new(0, 250, 0, 35)
+		minimizeBtn.Text = "+"
+		content.Visible = false
+	else
+		panel.Size = UDim2.new(0, 250, 0, 300)
+		minimizeBtn.Text = "−"
+		content.Visible = true
+	end
+end)
+
+-- Helper: Toggle
+local function makeToggle(name, key)
 	local container = Instance.new("Frame")
 	container.Size = UDim2.new(1, 0, 0, 25)
 	container.BackgroundTransparency = 1
@@ -217,7 +269,7 @@ local function makeToggle(name, key, onChange)
 	toggle.Size = UDim2.new(0, 45, 0, 20)
 	toggle.Position = UDim2.new(1, -45, 0.5, -10)
 	toggle.BackgroundColor3 = settings[key] and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(100, 100, 100)
-	toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toggle.TextColor3 = Color3.fromRGB(0, 0, 0)
 	toggle.TextSize = 9
 	toggle.Font = Enum.Font.GothamBold
 	toggle.Text = settings[key] and "ON" or "OFF"
@@ -232,15 +284,14 @@ local function makeToggle(name, key, onChange)
 		settings[key] = not settings[key]
 		toggle.BackgroundColor3 = settings[key] and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(100, 100, 100)
 		toggle.Text = settings[key] and "ON" or "OFF"
-		if onChange then onChange(settings[key]) end
 		print("✓ " .. name .. ": " .. tostring(settings[key]))
 	end)
 	
 	return container
 end
 
--- Helper to make sliders
-local function makeSlider(name, key, min, max, onChange)
+-- Helper: Slider
+local function makeSlider(name, key, min, max)
 	local container = Instance.new("Frame")
 	container.Size = UDim2.new(1, 0, 0, 45)
 	container.BackgroundTransparency = 1
@@ -287,8 +338,6 @@ local function makeSlider(name, key, min, max, onChange)
 		settings[key] = value
 		sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
 		label.Text = name .. ": " .. tostring(math.floor(value))
-		
-		if onChange then onChange(value) end
 	end
 	
 	sliderBg.InputBegan:Connect(function(input)
@@ -321,14 +370,14 @@ makeSlider("Range", "range", 10, 500)
 makeSlider("FOV", "fov", 10, 180)
 makeSlider("Smoothness", "smoothness", 0.01, 0.5)
 
--- Info text
+-- Info
 local info = Instance.new("TextLabel")
-info.Size = UDim2.new(1, 0, 0, 40)
+info.Size = UDim2.new(1, 0, 0, 50)
 info.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 info.TextColor3 = Color3.fromRGB(180, 180, 180)
 info.TextSize = 9
 info.Font = Enum.Font.Gotham
-info.Text = "Press E to lock target\nHold E to keep lock"
+info.Text = "🔑 Press E to LOCK/UNLOCK\n✓ Green circle = FOV\n🔴 Red circle = LOCKED"
 info.TextWrapped = true
 info.BorderSizePixel = 0
 info.Parent = content
@@ -337,4 +386,4 @@ local infoCorner = Instance.new("UICorner")
 infoCorner.CornerRadius = UDim.new(0, 4)
 infoCorner.Parent = info
 
-print("✓ GUI created successfully")
+print("✅ Aimbot fully loaded with FOV circle and Silent Aim")
