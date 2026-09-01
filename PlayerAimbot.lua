@@ -1,393 +1,340 @@
--- Place this in StarterPlayer > StarterPlayerScripts
--- Complete client-side aimbot with GUI in one script
+-- Place this in StarterPlayer > StarterPlayerScripts as a LocalScript
+-- AIMBOT WITH GUI - Everything in one script
 
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local Camera = Workspace.CurrentCamera
+local Workspace = game:GetService("Workspace")
 
-local localPlayer = Players.LocalPlayer
-local playerGui = localPlayer:WaitForChild("PlayerGui")
-local localCharacter = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+local camera = Workspace.CurrentCamera
 
--- Default settings
+-- Settings
 local settings = {
-	RANGE = 100,
-	SMOOTH = 6,
-	FOV = 100,
-	AIM_ASSIST = false,
-	ASSIST_STRENGTH = 0.5,
-	SILENT_AIM = false,
-	LOCK_KEY = Enum.KeyCode.E,
-	LOCKED_PLAYER = nil,
-	ENABLED = true
+	enabled = true,
+	range = 100,
+	fov = 120,
+	smoothness = 0.1,
+	aimAssist = false,
+	silentAim = false,
+	lockedTarget = nil
 }
 
--- ==================== AIMBOT LOGIC ====================
+print("✓ Aimbot script loaded")
 
-local function getNearestTarget()
-	local best, bestDist
-	local cameraPos = Camera.CFrame.Position
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player ~= localPlayer and player.Character then
-			local targetPart = player.Character:FindFirstChild("Head")
-			if targetPart then
-				local dist = (targetPart.Position - cameraPos).Magnitude
-				if dist <= settings.RANGE and (not bestDist or dist < bestDist) then
-					best = targetPart
-					bestDist = dist
-				end
+-- Get nearest player
+local function getNearestPlayer()
+	local nearest = nil
+	local nearestDist = settings.range
+	
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= player and p.Character and p.Character:FindFirstChild("Head") then
+			local head = p.Character.Head
+			local dist = (head.Position - camera.CFrame.Position).Magnitude
+			
+			if dist < nearestDist then
+				nearest = head
+				nearestDist = dist
 			end
 		end
 	end
-	return best
+	return nearest
 end
 
-local function hasLineOfSight(target)
-	local origin = Camera.CFrame.Position
-	local direction = target.Position - origin
-	local params = RaycastParams.new()
-	params.FilterDescendantsInstances = {localCharacter}
-	params.FilterType = Enum.RaycastFilterType.Blacklist
-	local result = Workspace:Raycast(origin, direction, params)
-	return result == nil
-end
-
+-- Check if target is in FOV
 local function isInFOV(target)
-	local cameraPos = Camera.CFrame.Position
-	local targetPos = target.Position
-	local direction = (targetPos - cameraPos).Unit
-	local cameraForward = Camera.CFrame.LookVector
-	local angle = math.deg(math.acos(math.clamp(direction:Dot(cameraForward), -1, 1)))
-	return angle <= settings.FOV / 2
+	if not target then return false end
+	local direction = (target.Position - camera.CFrame.Position).Unit
+	local dot = direction:Dot(camera.CFrame.LookVector)
+	local angle = math.deg(math.acos(dot))
+	return angle < settings.fov
 end
 
-local function aimAssist(target)
-	if not settings.AIM_ASSIST or not target then return end
+-- Line of sight check
+local function hasLineOfSight(target)
+	if not target then return false end
+	local ray = workspace:FindPartOnRay(Ray.new(camera.CFrame.Position, (target.Position - camera.CFrame.Position).Unit * 500))
+	return ray == nil or ray.Parent == target.Parent
+end
+
+-- Aim at target
+local function aimAtTarget(target)
+	if not target or not settings.enabled then return end
+	if not hasLineOfSight(target) or not isInFOV(target) then return end
 	
 	local targetPos = target.Position
-	local cameraPos = Camera.CFrame.Position
-	local newCFrame = CFrame.new(cameraPos, targetPos)
+	local newCFrame = CFrame.new(camera.CFrame.Position, targetPos)
 	
-	if settings.SILENT_AIM then
-		_G.SilentAimTarget = newCFrame
-	else
-		local t = math.clamp(settings.ASSIST_STRENGTH, 0, 1)
-		Camera.CFrame = Camera.CFrame:Lerp(newCFrame, t)
+	if settings.silentAim then
+		-- Just store it without moving camera
+		return
 	end
+	
+	camera.CFrame = camera.CFrame:Lerp(newCFrame, settings.smoothness)
 end
 
--- Handle lock key press
+-- E key to lock
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.KeyCode == settings.LOCK_KEY and settings.ENABLED then
-		settings.LOCKED_PLAYER = getNearestTarget()
+	if input.KeyCode == Enum.KeyCode.E then
+		settings.lockedTarget = getNearestPlayer()
 	end
 end)
 
--- Handle lock key release
-UserInputService.InputEnded:Connect(function(input, gameProcessed)
-	if input.KeyCode == settings.LOCK_KEY then
-		settings.LOCKED_PLAYER = nil
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.E then
+		settings.lockedTarget = nil
 	end
 end)
 
--- Update character on respawn
-localPlayer.CharacterAdded:Connect(function(character)
-	localCharacter = character
-end)
-
--- Main aimbot loop
-RunService.Heartbeat:Connect(function(dt)
-	if not settings.ENABLED then return end
+-- Main loop
+RunService.RenderStepped:Connect(function()
+	if not settings.enabled then return end
 	
-	local target = settings.LOCKED_PLAYER or getNearestTarget()
-	
-	if target and hasLineOfSight(target) and isInFOV(target) then
-		if settings.AIM_ASSIST then
-			aimAssist(target)
-		else
-			local cameraPos = Camera.CFrame.Position
-			local targetPos = target.Position
-			local desired = CFrame.new(cameraPos, targetPos)
-			local t = math.clamp(dt * settings.SMOOTH, 0, 1)
-			Camera.CFrame = Camera.CFrame:Lerp(desired, t)
-		end
+	local target = settings.lockedTarget or getNearestPlayer()
+	if target and settings.aimAssist then
+		aimAtTarget(target)
 	end
 end)
 
--- ==================== GUI CREATION ====================
+-- ==================== GUI ====================
 
--- Create main GUI
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "AimbotGUI"
+screenGui.Name = "AimbotGui"
 screenGui.ResetOnSpawn = false
-screenGui.Parent = playerGui
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- Main frame (minimizable)
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 300, 0, 420)
-mainFrame.Position = UDim2.new(0, 20, 0, 20)
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
+-- Main panel
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.Size = UDim2.new(0, 250, 0, 350)
+panel.Position = UDim2.new(0, 10, 0, 10)
+panel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+panel.BorderSizePixel = 0
+panel.Parent = screenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = mainFrame
+local panelCorner = Instance.new("UICorner")
+panelCorner.CornerRadius = UDim.new(0, 6)
+panelCorner.Parent = panel
 
--- Title bar
-local titleBar = Instance.new("Frame")
-titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, 0, 0, 30)
-titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-titleBar.BorderSizePixel = 0
-titleBar.Parent = mainFrame
+-- Header
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.Size = UDim2.new(1, 0, 0, 35)
+header.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+header.BorderSizePixel = 0
+header.Parent = panel
 
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 8)
-titleCorner.Parent = titleBar
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 6)
+headerCorner.Parent = header
 
--- Title text
-local titleText = Instance.new("TextLabel")
-titleText.Name = "TitleText"
-titleText.Size = UDim2.new(0.7, 0, 1, 0)
-titleText.BackgroundTransparency = 1
-titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleText.TextSize = 14
-titleText.Font = Enum.Font.GothamBold
-titleText.Text = "Aimbot"
-titleText.TextXAlignment = Enum.TextXAlignment.Left
-titleText.Parent = titleBar
-
--- Minimize button
-local minimizeBtn = Instance.new("TextButton")
-minimizeBtn.Name = "MinimizeBtn"
-minimizeBtn.Size = UDim2.new(0, 30, 1, 0)
-minimizeBtn.Position = UDim2.new(1, -30, 0, 0)
-minimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-minimizeBtn.TextSize = 14
-minimizeBtn.Font = Enum.Font.GothamBold
-minimizeBtn.Text = "−"
-minimizeBtn.BorderSizePixel = 0
-minimizeBtn.Parent = titleBar
-
-local isMinimized = false
-
-minimizeBtn.MouseButton1Click:Connect(function()
-	isMinimized = not isMinimized
-	if isMinimized then
-		mainFrame.Size = UDim2.new(0, 300, 0, 30)
-		minimizeBtn.Text = "+"
-		contentFrame.Visible = false
-	else
-		mainFrame.Size = UDim2.new(0, 300, 0, 420)
-		minimizeBtn.Text = "−"
-		contentFrame.Visible = true
-	end
-end)
-
--- Content frame
-local contentFrame = Instance.new("Frame")
-contentFrame.Name = "ContentFrame"
-contentFrame.Size = UDim2.new(1, 0, 1, -30)
-contentFrame.Position = UDim2.new(0, 0, 0, 30)
-contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = mainFrame
-
--- List layout for content
-local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0, 10)
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Parent = contentFrame
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1, -40, 1, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 13
+title.Font = Enum.Font.GothamBold
+title.Text = "AIMBOT"
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
 
 local padding = Instance.new("UIPadding")
-padding.PaddingTop = UDim.new(0, 10)
 padding.PaddingLeft = UDim.new(0, 10)
-padding.PaddingRight = UDim.new(0, 10)
-padding.PaddingBottom = UDim.new(0, 10)
-padding.Parent = contentFrame
+padding.Parent = title
 
--- ==================== GUI FUNCTIONS ====================
+-- Close button
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "Close"
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -35, 0, 2)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Text = "−"
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = header
 
--- Function to create a slider control
-local function createSlider(name, min, max, default, onChanged)
-	local container = Instance.new("Frame")
-	container.Name = name
-	container.Size = UDim2.new(1, 0, 0, 50)
-	container.BackgroundTransparency = 1
-	container.Parent = contentFrame
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 4)
+closeCorner.Parent = closeBtn
 
-	local label = Instance.new("TextLabel")
-	label.Name = "Label"
-	label.Size = UDim2.new(1, 0, 0, 20)
-	label.BackgroundTransparency = 1
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextSize = 12
-	label.Font = Enum.Font.Gotham
-	label.Text = name .. ": " .. tostring(math.floor(default))
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Parent = container
-
-	local slider = Instance.new("Frame")
-	slider.Name = "Slider"
-	slider.Size = UDim2.new(1, 0, 0, 6)
-	slider.Position = UDim2.new(0, 0, 0, 25)
-	slider.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-	slider.BorderSizePixel = 0
-	slider.Parent = container
-
-	local sliderCorner = Instance.new("UICorner")
-	sliderCorner.CornerRadius = UDim.new(0, 3)
-	sliderCorner.Parent = slider
-
-	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-	fill.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
-	fill.BorderSizePixel = 0
-	fill.Parent = slider
-
-	local fillCorner = Instance.new("UICorner")
-	fillCorner.CornerRadius = UDim.new(0, 3)
-	fillCorner.Parent = fill
-
-	local function updateSlider(inputSize)
-		local ratio = math.clamp(inputSize.X / slider.AbsoluteSize.X, 0, 1)
-		local newValue = min + (ratio * (max - min))
-		fill.Size = UDim2.new(ratio, 0, 1, 0)
-		label.Text = name .. ": " .. tostring(math.floor(newValue))
-		onChanged(newValue)
+local isMinimized = false
+closeBtn.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		panel.Size = UDim2.new(0, 250, 0, 35)
+		closeBtn.Text = "+"
+		content.Visible = false
+	else
+		panel.Size = UDim2.new(0, 250, 0, 350)
+		closeBtn.Text = "−"
+		content.Visible = true
 	end
+end)
 
-	local dragging = false
-	fill.InputBegan:Connect(function(input, gameProcessed)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-		end
-	end)
+-- Content
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Size = UDim2.new(1, 0, 1, -35)
+content.Position = UDim2.new(0, 0, 0, 35)
+content.BackgroundTransparency = 1
+content.Parent = panel
 
-	fill.InputEnded:Connect(function(input, gameProcessed)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-		end
-	end)
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.Padding = UDim.new(0, 8)
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Parent = content
 
-	slider.InputBegan:Connect(function(input, gameProcessed)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-			updateSlider(slider.AbsoluteSize * (input.Position - slider.AbsolutePosition))
-		end
-	end)
+local contentPadding = Instance.new("UIPadding")
+contentPadding.PaddingTop = UDim.new(0, 8)
+contentPadding.PaddingLeft = UDim.new(0, 8)
+contentPadding.PaddingRight = UDim.new(0, 8)
+contentPadding.PaddingBottom = UDim.new(0, 8)
+contentPadding.Parent = content
 
-	slider.InputEnded:Connect(function(input, gameProcessed)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-		end
-	end)
-
-	game:GetService("UserInputService").InputChanged:Connect(function(input, gameProcessed)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-			updateSlider(slider.AbsoluteSize * (input.Position - slider.AbsolutePosition))
-		end
-	end)
-
-	return container
-end
-
--- Function to create a toggle button
-local function createToggle(name, default, onToggled)
+-- Helper to make toggles
+local function makeToggle(name, key, onChange)
 	local container = Instance.new("Frame")
-	container.Name = name
-	container.Size = UDim2.new(1, 0, 0, 35)
+	container.Size = UDim2.new(1, 0, 0, 25)
 	container.BackgroundTransparency = 1
-	container.Parent = contentFrame
-
+	container.Parent = content
+	
 	local label = Instance.new("TextLabel")
-	label.Name = "Label"
-	label.Size = UDim2.new(0.7, 0, 1, 0)
+	label.Size = UDim2.new(0.6, 0, 1, 0)
 	label.BackgroundTransparency = 1
 	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextSize = 12
+	label.TextSize = 11
 	label.Font = Enum.Font.Gotham
 	label.Text = name
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.Parent = container
-
+	
 	local toggle = Instance.new("TextButton")
-	toggle.Name = "Toggle"
-	toggle.Size = UDim2.new(0, 40, 0, 25)
-	toggle.Position = UDim2.new(1, -40, 0.5, -12.5)
-	toggle.BackgroundColor3 = default and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(60, 60, 60)
+	toggle.Size = UDim2.new(0, 45, 0, 20)
+	toggle.Position = UDim2.new(1, -45, 0.5, -10)
+	toggle.BackgroundColor3 = settings[key] and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(100, 100, 100)
 	toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-	toggle.TextSize = 10
+	toggle.TextSize = 9
 	toggle.Font = Enum.Font.GothamBold
-	toggle.Text = default and "ON" or "OFF"
+	toggle.Text = settings[key] and "ON" or "OFF"
 	toggle.BorderSizePixel = 0
 	toggle.Parent = container
-
+	
 	local toggleCorner = Instance.new("UICorner")
-	toggleCorner.CornerRadius = UDim.new(0, 5)
+	toggleCorner.CornerRadius = UDim.new(0, 4)
 	toggleCorner.Parent = toggle
-
-	local state = default
-
+	
 	toggle.MouseButton1Click:Connect(function()
-		state = not state
-		toggle.BackgroundColor3 = state and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(60, 60, 60)
-		toggle.Text = state and "ON" or "OFF"
-		onToggled(state)
+		settings[key] = not settings[key]
+		toggle.BackgroundColor3 = settings[key] and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(100, 100, 100)
+		toggle.Text = settings[key] and "ON" or "OFF"
+		if onChange then onChange(settings[key]) end
+		print("✓ " .. name .. ": " .. tostring(settings[key]))
 	end)
-
+	
 	return container
 end
 
--- ==================== CREATE GUI CONTROLS ====================
+-- Helper to make sliders
+local function makeSlider(name, key, min, max, onChange)
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, 0, 0, 45)
+	container.BackgroundTransparency = 1
+	container.Parent = content
+	
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 0, 15)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextSize = 10
+	label.Font = Enum.Font.Gotham
+	label.Text = name .. ": " .. tostring(math.floor(settings[key]))
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = container
+	
+	local sliderBg = Instance.new("Frame")
+	sliderBg.Size = UDim2.new(1, 0, 0, 8)
+	sliderBg.Position = UDim2.new(0, 0, 0, 20)
+	sliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	sliderBg.BorderSizePixel = 0
+	sliderBg.Parent = container
+	
+	local sliderCorner = Instance.new("UICorner")
+	sliderCorner.CornerRadius = UDim.new(0, 4)
+	sliderCorner.Parent = sliderBg
+	
+	local sliderFill = Instance.new("Frame")
+	sliderFill.Size = UDim2.new((settings[key] - min) / (max - min), 0, 1, 0)
+	sliderFill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+	sliderFill.BorderSizePixel = 0
+	sliderFill.Parent = sliderBg
+	
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(0, 4)
+	fillCorner.Parent = sliderFill
+	
+	local dragging = false
+	
+	local function updateSlider(x)
+		local relX = x - sliderBg.AbsolutePosition.X
+		local ratio = math.clamp(relX / sliderBg.AbsoluteSize.X, 0, 1)
+		local value = min + (ratio * (max - min))
+		
+		settings[key] = value
+		sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+		label.Text = name .. ": " .. tostring(math.floor(value))
+		
+		if onChange then onChange(value) end
+	end
+	
+	sliderBg.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			updateSlider(input.Position.X)
+		end
+	end)
+	
+	sliderBg.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			updateSlider(input.Position.X)
+		end
+	end)
+	
+	return container
+end
 
-createToggle("Enable", settings.ENABLED, function(state)
-	settings.ENABLED = state
-end)
+-- Add controls
+makeToggle("Enable", "enabled")
+makeToggle("Aim Assist", "aimAssist")
+makeToggle("Silent Aim", "silentAim")
+makeSlider("Range", "range", 10, 500)
+makeSlider("FOV", "fov", 10, 180)
+makeSlider("Smoothness", "smoothness", 0.01, 0.5)
 
-createSlider("Range", 10, 300, settings.RANGE, function(value)
-	settings.RANGE = value
-end)
+-- Info text
+local info = Instance.new("TextLabel")
+info.Size = UDim2.new(1, 0, 0, 40)
+info.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+info.TextColor3 = Color3.fromRGB(180, 180, 180)
+info.TextSize = 9
+info.Font = Enum.Font.Gotham
+info.Text = "Press E to lock target\nHold E to keep lock"
+info.TextWrapped = true
+info.BorderSizePixel = 0
+info.Parent = content
 
-createSlider("Smoothness", 1, 15, settings.SMOOTH, function(value)
-	settings.SMOOTH = value
-end)
+local infoCorner = Instance.new("UICorner")
+infoCorner.CornerRadius = UDim.new(0, 4)
+infoCorner.Parent = info
 
-createSlider("FOV", 10, 180, settings.FOV, function(value)
-	settings.FOV = value
-end)
-
-createToggle("Aim Assist", settings.AIM_ASSIST, function(state)
-	settings.AIM_ASSIST = state
-end)
-
-createToggle("Silent Aim", settings.SILENT_AIM, function(state)
-	settings.SILENT_AIM = state
-end)
-
-createSlider("Assist Strength", 0, 1, settings.ASSIST_STRENGTH, function(value)
-	settings.ASSIST_STRENGTH = value
-end)
-
--- Status label
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Name = "Status"
-statusLabel.Size = UDim2.new(1, 0, 0, 50)
-statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.TextSize = 11
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.Text = "Press E to lock onto nearest target\n(Hold E to maintain lock)"
-statusLabel.TextWrapped = true
-statusLabel.BorderSizePixel = 0
-statusLabel.Parent = contentFrame
-
-local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 5)
-statusCorner.Parent = statusLabel
+print("✓ GUI created successfully")
